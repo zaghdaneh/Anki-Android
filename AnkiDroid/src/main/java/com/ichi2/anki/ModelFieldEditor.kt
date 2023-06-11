@@ -24,9 +24,11 @@ import android.view.MenuItem
 import android.widget.AdapterView
 import android.widget.ArrayAdapter
 import android.widget.EditText
+import android.widget.FrameLayout
 import android.widget.ListView
 import androidx.annotation.RequiresApi
 import androidx.annotation.VisibleForTesting
+import androidx.appcompat.app.AlertDialog
 import androidx.fragment.app.DialogFragment
 import androidx.fragment.app.FragmentManager
 import com.afollestad.materialdialogs.MaterialDialog
@@ -47,6 +49,10 @@ import com.ichi2.libanki.Collection
 import com.ichi2.libanki.Model
 import com.ichi2.ui.FixedEditText
 import com.ichi2.utils.displayKeyboard
+import com.ichi2.utils.negativeButton
+import com.ichi2.utils.positiveButton
+import com.ichi2.utils.show
+import com.ichi2.utils.title
 import com.ichi2.utils.toStringList
 import com.ichi2.widget.WidgetStatus
 import org.json.JSONArray
@@ -163,7 +169,7 @@ class ModelFieldEditor : AnkiActivity(), LocaleSelectionDialogHandler {
     /*
     * Creates a dialog to create a field
     */
-    private fun addFieldDialog() {
+    private fun addFieldDialog2() {
         fieldNameInput = FixedEditText(this)
         fieldNameInput?.let { _fieldNameInput ->
             _fieldNameInput.isSingleLine = true
@@ -198,6 +204,55 @@ class ModelFieldEditor : AnkiActivity(), LocaleSelectionDialogHandler {
                 negativeButton(R.string.dialog_cancel)
             }
                 .displayKeyboard(_fieldNameInput)
+        }
+    }
+
+    private fun addFieldDialog() {
+        fieldNameInput = FixedEditText(this).apply {
+            focusWithKeyboard()
+        }
+        fieldNameInput?.let { _fieldNameInput ->
+            _fieldNameInput.isSingleLine = true
+            AlertDialog.Builder(this).show {
+                val container = FrameLayout(context)
+                container.addView(fieldNameInput)
+                val containerParams = FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.MATCH_PARENT,
+                    FrameLayout.LayoutParams.WRAP_CONTENT
+                )
+                containerParams.leftMargin = 48
+                containerParams.rightMargin = 48
+                container.layoutParams = containerParams
+
+                setView(container)
+                title(R.string.model_field_editor_add)
+                positiveButton(R.string.dialog_ok) {
+                    // Name is valid, now field is added
+                    val fieldName = uniqueName(_fieldNameInput)
+                    try {
+                        addField(fieldName, true)
+                    } catch (e: ConfirmModSchemaException) {
+                        e.log()
+
+                        // Create dialogue to for schema change
+                        val c = ConfirmationDialog()
+                        c.setArgs(resources.getString(R.string.full_sync_confirmation))
+                        val confirm = Runnable {
+                            try {
+                                addField(fieldName, false)
+                            } catch (e1: ConfirmModSchemaException) {
+                                e1.log()
+                                // This should never be thrown
+                            }
+                        }
+                        c.setConfirm(confirm)
+                        this@ModelFieldEditor.showDialogFragment(c)
+                    }
+                    collection.models.update(mModel)
+                    initialize()
+                }
+                negativeButton(R.string.dialog_cancel)
+            }
         }
     }
 
