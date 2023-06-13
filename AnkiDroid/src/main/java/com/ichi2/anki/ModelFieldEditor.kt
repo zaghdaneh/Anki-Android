@@ -24,15 +24,12 @@ import android.view.MenuItem
 import android.widget.AdapterView
 import android.widget.ArrayAdapter
 import android.widget.EditText
-import android.widget.FrameLayout
 import android.widget.ListView
 import androidx.annotation.RequiresApi
 import androidx.annotation.VisibleForTesting
 import androidx.appcompat.app.AlertDialog
 import androidx.fragment.app.DialogFragment
 import androidx.fragment.app.FragmentManager
-import com.afollestad.materialdialogs.MaterialDialog
-import com.afollestad.materialdialogs.customview.customView
 import com.google.android.material.snackbar.Snackbar
 import com.ichi2.anim.ActivityTransitionAnimation
 import com.ichi2.anki.CollectionManager.withCol
@@ -48,7 +45,7 @@ import com.ichi2.anki.snackbar.showSnackbar
 import com.ichi2.libanki.Collection
 import com.ichi2.libanki.Model
 import com.ichi2.ui.FixedEditText
-import com.ichi2.utils.displayKeyboard
+import com.ichi2.utils.customView
 import com.ichi2.utils.negativeButton
 import com.ichi2.utils.positiveButton
 import com.ichi2.utils.show
@@ -169,44 +166,6 @@ class ModelFieldEditor : AnkiActivity(), LocaleSelectionDialogHandler {
     /*
     * Creates a dialog to create a field
     */
-    private fun addFieldDialog2() {
-        fieldNameInput = FixedEditText(this)
-        fieldNameInput?.let { _fieldNameInput ->
-            _fieldNameInput.isSingleLine = true
-            MaterialDialog(this).show {
-                customView(view = _fieldNameInput, horizontalPadding = true)
-                title(R.string.model_field_editor_add)
-                positiveButton(R.string.dialog_ok) {
-                    // Name is valid, now field is added
-                    val fieldName = uniqueName(_fieldNameInput)
-                    try {
-                        addField(fieldName, true)
-                    } catch (e: ConfirmModSchemaException) {
-                        e.log()
-
-                        // Create dialogue to for schema change
-                        val c = ConfirmationDialog()
-                        c.setArgs(resources.getString(R.string.full_sync_confirmation))
-                        val confirm = Runnable {
-                            try {
-                                addField(fieldName, false)
-                            } catch (e1: ConfirmModSchemaException) {
-                                e1.log()
-                                // This should never be thrown
-                            }
-                        }
-                        c.setConfirm(confirm)
-                        this@ModelFieldEditor.showDialogFragment(c)
-                    }
-                    collection.models.update(mModel)
-                    initialize()
-                }
-                negativeButton(R.string.dialog_cancel)
-            }
-                .displayKeyboard(_fieldNameInput)
-        }
-    }
-
     private fun addFieldDialog() {
         fieldNameInput = FixedEditText(this).apply {
             focusWithKeyboard()
@@ -214,17 +173,7 @@ class ModelFieldEditor : AnkiActivity(), LocaleSelectionDialogHandler {
         fieldNameInput?.let { _fieldNameInput ->
             _fieldNameInput.isSingleLine = true
             AlertDialog.Builder(this).show {
-                val container = FrameLayout(context)
-                container.addView(fieldNameInput)
-                val containerParams = FrameLayout.LayoutParams(
-                    FrameLayout.LayoutParams.MATCH_PARENT,
-                    FrameLayout.LayoutParams.WRAP_CONTENT
-                )
-                containerParams.leftMargin = 48
-                containerParams.rightMargin = 48
-                container.layoutParams = containerParams
-
-                setView(container)
+                customView(_fieldNameInput, marginLeft = 64, marginRight = 64, marginTop = 32)
                 title(R.string.model_field_editor_add)
                 positiveButton(R.string.dialog_ok) {
                     // Name is valid, now field is added
@@ -341,13 +290,13 @@ class ModelFieldEditor : AnkiActivity(), LocaleSelectionDialogHandler {
      * Processing time is constant
      */
     private fun renameFieldDialog() {
-        fieldNameInput = FixedEditText(this)
+        fieldNameInput = FixedEditText(this).apply { focusWithKeyboard() }
         fieldNameInput?.let { _fieldNameInput ->
             _fieldNameInput.isSingleLine = true
             _fieldNameInput.setText(mFieldsLabels[currentPos])
             _fieldNameInput.setSelection(_fieldNameInput.text!!.length)
-            MaterialDialog(this).show {
-                customView(view = _fieldNameInput, horizontalPadding = true)
+            AlertDialog.Builder(this).show {
+                customView(_fieldNameInput, marginLeft = 64, marginRight = 64, marginTop = 32)
                 title(R.string.model_field_editor_rename)
                 positiveButton(R.string.rename) {
                     if (uniqueName(_fieldNameInput) == null) {
@@ -376,7 +325,6 @@ class ModelFieldEditor : AnkiActivity(), LocaleSelectionDialogHandler {
                     }
                 }
                 negativeButton(R.string.dialog_cancel)
-                displayKeyboard(_fieldNameInput)
             }
         }
     }
@@ -387,11 +335,11 @@ class ModelFieldEditor : AnkiActivity(), LocaleSelectionDialogHandler {
      * Processing time is scales with number of items
      */
     private fun repositionFieldDialog() {
-        fieldNameInput = FixedEditText(this)
+        fieldNameInput = FixedEditText(this).apply { focusWithKeyboard() }
         fieldNameInput?.let { _fieldNameInput ->
             _fieldNameInput.setRawInputType(InputType.TYPE_CLASS_NUMBER)
-            MaterialDialog(this).show {
-                customView(view = _fieldNameInput, scrollable = true)
+            AlertDialog.Builder(this).show {
+                customView(_fieldNameInput)
                 title(text = String.format(resources.getString(R.string.model_field_editor_reposition), 1, mFieldsLabels.size))
                 positiveButton(R.string.dialog_ok) {
                     val newPosition = _fieldNameInput.text.toString()
@@ -430,7 +378,6 @@ class ModelFieldEditor : AnkiActivity(), LocaleSelectionDialogHandler {
                 }
                 negativeButton(R.string.dialog_cancel)
             }
-                .displayKeyboard(_fieldNameInput)
         }
     }
 
