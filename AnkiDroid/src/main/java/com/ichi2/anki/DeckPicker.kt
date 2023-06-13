@@ -92,7 +92,8 @@ import com.ichi2.anki.receiver.SdCardReceiver
 import com.ichi2.anki.servicelayer.*
 import com.ichi2.anki.servicelayer.SchedulerService.NextCard
 import com.ichi2.anki.servicelayer.ScopedStorageService.isLegacyStorage
-import com.ichi2.anki.servicelayer.ScopedStorageService.userMigrationIsInProgress
+import com.ichi2.anki.servicelayer.ScopedStorageService.mediaMigrationIsInProgress
+import com.ichi2.anki.servicelayer.ScopedStorageService.prepareAndValidateSourceAndDestinationFolders
 import com.ichi2.anki.services.MediaMigrationState
 import com.ichi2.anki.services.MigrationService
 import com.ichi2.anki.services.PREF_MIGRATION_ERROR_TEXT
@@ -584,7 +585,7 @@ open class DeckPicker :
 
     override fun onCreateOptionsMenu(menu: Menu): Boolean {
         Timber.d("onCreateOptionsMenu()")
-        mFloatingActionMenu.closeFloatingActionMenu()
+        mFloatingActionMenu.closeFloatingActionMenu(applyRiseAndShrinkAnimation = false)
         menuInflater.inflate(R.menu.deck_picker, menu)
         setupSearchIcon(menu.findItem(R.id.deck_picker_action_filter))
         mToolbarSearchView = menu.findItem(R.id.deck_picker_action_filter).actionView as SearchView
@@ -806,7 +807,7 @@ open class DeckPicker :
     }
 
     override fun onOptionsItemSelected(item: MenuItem): Boolean {
-        mFloatingActionMenu.closeFloatingActionMenu()
+        mFloatingActionMenu.closeFloatingActionMenu(applyRiseAndShrinkAnimation = true)
 
         if (drawerToggle.onOptionsItemSelected(item)) {
             return true
@@ -1037,7 +1038,7 @@ open class DeckPicker :
         val automaticSyncIntervalInMS = AUTOMATIC_SYNC_MINIMAL_INTERVAL_IN_MINUTES * 60 * 1000
         val syncIntervalPassed = TimeManager.time.intTimeMS() - lastSyncTime > automaticSyncIntervalInMS
         val isNotBlockedByMeteredConnection = preferences.getBoolean(getString(R.string.metered_sync_key), false) || !isActiveNetworkMetered()
-        val isMigratingStorage = userMigrationIsInProgress(this)
+        val isMigratingStorage = mediaMigrationIsInProgress(this)
         if (isLoggedIn() && autoSyncIsEnabled && NetworkUtils.isOnline && syncIntervalPassed && isNotBlockedByMeteredConnection && !isMigratingStorage) {
             Timber.i("Triggering Automatic Sync")
             sync()
@@ -1053,7 +1054,7 @@ open class DeckPicker :
         } else {
             Timber.i("Back key pressed")
             if (mFloatingActionMenu.isFABOpen) {
-                mFloatingActionMenu.closeFloatingActionMenu()
+                mFloatingActionMenu.closeFloatingActionMenu(applyRiseAndShrinkAnimation = true)
             } else {
                 if (!preferences.getBoolean("exitViaDoubleTapBack", false) || mBackButtonPressedToExit) {
                     automaticSync()
@@ -1391,7 +1392,7 @@ open class DeckPicker :
 
     // Show dialogs to deal with database loading issues etc
     open fun showDatabaseErrorDialog(errorDialogType: DatabaseErrorDialogType) {
-        if (errorDialogType == DatabaseErrorDialogType.DIALOG_CONFIRM_DATABASE_CHECK && userMigrationIsInProgress(this)) {
+        if (errorDialogType == DatabaseErrorDialogType.DIALOG_CONFIRM_DATABASE_CHECK && mediaMigrationIsInProgress(this)) {
             showSnackbar(R.string.functionality_disabled_during_storage_migration, Snackbar.LENGTH_SHORT)
             return
         }
@@ -1400,7 +1401,7 @@ open class DeckPicker :
     }
 
     override fun showMediaCheckDialog(dialogType: Int) {
-        if (dialogType == MediaCheckDialog.DIALOG_CONFIRM_MEDIA_CHECK && userMigrationIsInProgress(this)) {
+        if (dialogType == MediaCheckDialog.DIALOG_CONFIRM_MEDIA_CHECK && mediaMigrationIsInProgress(this)) {
             showSnackbar(R.string.functionality_disabled_during_storage_migration, Snackbar.LENGTH_SHORT)
             return
         }
@@ -1461,7 +1462,7 @@ open class DeckPicker :
 
     // Callback method to handle database integrity check
     override fun integrityCheck() {
-        if (userMigrationIsInProgress(this)) {
+        if (mediaMigrationIsInProgress(this)) {
             // The only path which can still display this is a sync error, which shouldn't be possible
             showSnackbar(R.string.functionality_disabled_during_storage_migration, Snackbar.LENGTH_SHORT)
             return
@@ -2296,84 +2297,33 @@ open class DeckPicker :
     }
 
     private fun handleEmptyCards() {
-        mEmptyCardTask = TaskManager.launchCollectionTask(FindEmptyCards(), handlerEmptyCardListener())
-    }
-
-    private fun handlerEmptyCardListener(): HandleEmptyCardListener {
-        return HandleEmptyCardListener(this)
-    }
-
-    private class HandleEmptyCardListener(deckPicker: DeckPicker) : TaskListenerWithContext<DeckPicker, Int, List<Long?>?>(deckPicker) {
-        private val mNumberOfCards: Int = deckPicker.col.cardCount()
-        private val mOnePercent: Int = mNumberOfCards / 100
-        private var mIncreaseSinceLastUpdate = 0
-        private fun confirmCancel(deckPicker: DeckPicker, task: Cancellable) {
-            AlertDialog.Builder(deckPicker).show {
-                message(R.string.confirm_cancel)
-                positiveButton(R.string.dialog_yes) {
-                    task.safeCancel()
-                }
-                negativeButton(R.string.dialog_no) {
-                    actualOnPreExecute(deckPicker)
+        launchCatchingTask {
+            val emptyCids = withProgress(R.string.emtpy_cards_finding) {
+                withCol {
+                    if (!BackendFactory.defaultLegacySchema) {
+                        newBackend.getEmptyCards().notesList.flatMap { it.cardIdsList }
+                    } else {
+                        emptyCids()
+                    }
                 }
             }
-        }
-
-        @KotlinCleanup("Material Progress Dialog")
-        override fun actualOnPreExecute(context: DeckPicker) {
-            val onCancel = DialogInterface.OnCancelListener { _: DialogInterface? ->
-                val emptyCardTask = context.mEmptyCardTask
-                emptyCardTask?.let { confirmCancel(context, it) }
-            }
-            @Suppress("Deprecation")
-            context.mProgressDialog = android.app.ProgressDialog(context).apply {
-                progress = mNumberOfCards
-                setTitle(R.string.emtpy_cards_finding)
-                setCancelable(true)
-                show()
-                setOnCancelListener(onCancel)
-                setCanceledOnTouchOutside(false)
-            }
-        }
-
-        override fun actualOnProgressUpdate(context: DeckPicker, value: Int) {
-            mIncreaseSinceLastUpdate += value
-            // Increase each time at least a percent of card has been processed since last update
-            if (mIncreaseSinceLastUpdate > mOnePercent) {
-                @Suppress("Deprecation")
-                context.mProgressDialog!!.incrementProgressBy(mIncreaseSinceLastUpdate)
-                mIncreaseSinceLastUpdate = 0
-            }
-        }
-
-        override fun actualOnCancelled(context: DeckPicker) {
-            context.mEmptyCardTask = null
-        }
-
-        /**
-         * @param context
-         * @param result Null if it is cancelled (in this case we should not have called this method) or a list of cids
-         */
-        override fun actualOnPostExecute(context: DeckPicker, result: List<Long?>?) {
-            context.mEmptyCardTask = null
-            if (result == null) {
-                return
-            }
-            if (result.isEmpty()) {
-                context.showSimpleMessageDialog(context.resources.getString(R.string.empty_cards_none))
-            } else {
-                val msg = String.format(context.resources.getString(R.string.empty_cards_count), result.size)
-                val dialog = ConfirmationDialog()
-                dialog.setArgs(msg)
-                dialog.setConfirm {
-                    context.col.remCards(result.requireNoNulls())
-                    val message = context.resources.getString(R.string.empty_cards_deleted, result.size)
-                    context.showSnackbar(message)
+            AlertDialog.Builder(this@DeckPicker).show {
+                setTitle(TR.emptyCardsWindowTitle())
+                if (emptyCids.isEmpty()) {
+                    setMessage(TR.emptyCardsNotFound())
+                    setPositiveButton(R.string.dialog_ok) { _, _ -> }
+                } else {
+                    setMessage(getString(R.string.empty_cards_count, emptyCids.size))
+                    setPositiveButton(R.string.dialog_positive_delete) { _, _ ->
+                        launchCatchingTask {
+                            withProgress(TR.emptyCardsDeleting()) {
+                                withCol { removeCardsAndOrphanedNotes(emptyCids) }
+                            }
+                        }
+                        showSnackbar(getString(R.string.empty_cards_deleted, emptyCids.size))
+                    }
+                    setNegativeButton(R.string.dialog_cancel) { _, _ -> }
                 }
-                context.showDialogFragment(dialog)
-            }
-            if (context.mProgressDialog != null && context.mProgressDialog!!.isShowing) {
-                context.mProgressDialog!!.dismiss()
             }
         }
     }
@@ -2570,7 +2520,7 @@ open class DeckPicker :
     fun migrate() {
         migrateStorageAfterMediaSyncCompleted = false
 
-        if (userMigrationIsInProgress(this) || !isLegacyStorage(this)) {
+        if (mediaMigrationIsInProgress(this) || !isLegacyStorage(this)) {
             // This should not ever occurs.
             return
         }
@@ -2583,15 +2533,12 @@ open class DeckPicker :
         launchCatchingTask {
             val elapsedMillisDuringEssentialFilesMigration = measureTimeMillis {
                 withProgress(getString(R.string.start_migration_progress_message)) {
-                    withContext(Dispatchers.IO) {
-                        loadDeckCounts?.cancel()
-                        CollectionHelper.instance.closeCollection(false, "migration to scoped storage")
-                        ScopedStorageService.migrateEssentialFiles(baseContext)
-
-                        updateDeckList()
-                        handleStartup()
-                        startMigrateUserDataService()
-                    }
+                    loadDeckCounts?.cancel()
+                    val folders = prepareAndValidateSourceAndDestinationFolders(baseContext)
+                    CollectionManager.migrateEssentialFiles(baseContext, folders)
+                    updateDeckList()
+                    handleStartup()
+                    startMigrateUserDataService()
                 }
             }
             if (elapsedMillisDuringEssentialFilesMigration > 800) {
@@ -2644,7 +2591,7 @@ open class DeckPicker :
      */
     private fun showDialogThatOffersToMigrateStorage(shownAutomatically: Boolean) {
         Timber.i("Displaying dialog to migrate storage")
-        if (userMigrationIsInProgress(baseContext)) {
+        if (mediaMigrationIsInProgress(baseContext)) {
             // This should not occur. We should have not called the function in this case.
             return
         }
